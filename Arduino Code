@@ -1,0 +1,134 @@
+#include <Adafruit_INA219.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>  // Include the LiquidCrystal_I2C library
+
+Adafruit_INA219 ina219;
+
+// Initialize the LCD object with the I2C address and display dimensions
+// Replace 0x27 with your LCD's I2C address (use an I2C scanner to find it)
+// Replace 16 and 2 with the number of columns and rows of your LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // 16x2 LCD
+
+// State variables
+bool motorRunning = false;
+bool buttonPressedA0 = false;
+bool buttonPressedA2 = false;
+bool valveOpening = false;  // Track if the valve is opening
+bool valveClosing = false;  // Track if the valve is closing
+
+// Counter for Serial Monitor updates
+unsigned long printInterval = 1000;  // Print every 1000 milliseconds (1 second)
+unsigned long lastPrintTime = 0;     // Track the last print time
+
+void setup() {
+  // Initialize Serial communication
+  Serial.begin(9600);
+
+  // Initialize INA219
+  if (!ina219.begin()) {
+    Serial.println("Failed to find INA219 chip");
+    while (1) { delay(10); }
+  }
+
+  // Set pin modes
+  pinMode(A0, INPUT);  // Button 1 connected to A0
+  pinMode(A2, INPUT);  // Button 2 connected to A2
+  pinMode(3, OUTPUT);  // IN1 of L298N connected to pin 3
+  pinMode(5, OUTPUT);  // IN2 of L298N connected to pin 5
+
+  // Initialize the LCD
+  lcd.init();         // Initialize the LCD
+  lcd.backlight();    // Turn on the backlight
+  lcd.clear();        // Clear the LCD display
+}
+
+void loop() {
+  // Read current from INA219
+  float current_mA = ina219.getCurrent_mA();
+
+  // Read button states
+  int buttonStateA0 = analogRead(A0);  // Read analog value from A0
+  int buttonStateA2 = analogRead(A2);  // Read analog value from A2
+
+  // Detect rising edge of button press on A0
+  if (buttonStateA0 > 800 && !buttonPressedA0) {
+    buttonPressedA0 = true;  // Mark button A0 as pressed
+    if (!motorRunning) {
+      motorRunning = true;  // Start the motor in one direction
+      valveOpening = true;  // Set valve opening state
+      valveClosing = false; // Reset valve closing state
+      digitalWrite(3, HIGH);  // Set IN1 to HIGH
+      digitalWrite(5, LOW);   // Set IN2 to LOW
+      Serial.println("Button A0 pressed - Motor ON (Direction 1)");
+
+      // Update LCD display
+      lcd.clear();  // Clear the LCD
+      lcd.setCursor(0, 0);  // Set cursor to column 0, line 0
+      lcd.print("Valve Opening");  // Print "Valve Opening"
+    }
+  } else if (buttonStateA0 <= 800) {
+    buttonPressedA0 = false;  // Reset button A0 state when released
+  }
+
+  // Detect rising edge of button press on A2
+  if (buttonStateA2 > 800 && !buttonPressedA2) {
+    buttonPressedA2 = true;  // Mark button A2 as pressed
+    if (!motorRunning) {
+      motorRunning = true;  // Start the motor in the opposite direction
+      valveClosing = true;  // Set valve closing state
+      valveOpening = false; // Reset valve opening state
+      digitalWrite(3, LOW);   // Set IN1 to LOW
+      digitalWrite(5, HIGH);  // Set IN2 to HIGH
+      Serial.println("Button A2 pressed - Motor ON (Direction 2)");
+
+      // Update LCD display
+      lcd.clear();  // Clear the LCD
+      lcd.setCursor(0, 0);  // Set cursor to column 0, line 0
+      lcd.print("Valve Closing");  // Print "Valve Closing"
+    }
+  } else if (buttonStateA2 <= 800) {
+    buttonPressedA2 = false;  // Reset button A2 state when released
+  }
+
+  // Stop the motor if current exceeds 300 mA or goes below -300 mA
+  if (motorRunning && (current_mA > 300 || current_mA < -300)) {
+    motorRunning = false;  // Stop the motor
+    digitalWrite(3, LOW);  // Set IN1 to LOW
+    digitalWrite(5, LOW);  // Set IN2 to LOW
+    Serial.println("Current limit exceeded - Motor OFF");
+
+    // Update LCD display based on valve state
+    if (valveOpening) {
+      lcd.clear();  // Clear the LCD
+      lcd.setCursor(0, 0);  // Set cursor to column 0, line 0
+      lcd.print("Valve Open");  // Print "Valve Open"
+      valveOpening = false;  // Reset valve opening state
+    } else if (valveClosing) {
+      lcd.clear();  // Clear the LCD
+      lcd.setCursor(0, 0);  // Set cursor to column 0, line 0
+      lcd.print("Valve Closed");  // Print "Valve Closed"
+      valveClosing = false;  // Reset valve closing state
+    }
+  }
+
+  // Print data to Serial Monitor at a slower rate
+  unsigned long currentTime = millis();  // Get the current time
+  if (currentTime - lastPrintTime >= printInterval) {
+    lastPrintTime = currentTime;  // Update the last print time
+
+    // Print current to Serial Monitor
+    Serial.print("Motor current: ");
+    Serial.print(current_mA);
+    Serial.println(" mA");
+
+    // Print the analog values of the buttons for debugging
+    Serial.print("Analog button A0 value: ");
+    Serial.println(buttonStateA0);
+    Serial.print("Analog button A2 value: ");
+    Serial.println(buttonStateA2);
+    Serial.println();  // Add a blank line for readability
+  }
+
+  // Small delay for stability
+  delay(100);
+}
